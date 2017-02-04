@@ -15,8 +15,8 @@ from sklearn.preprocessing import normalize
 from sklearn.utils.linear_assignment_ import linear_assignment
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-import cPickle as pickle
-from DEC import ClusteringLayer
+import pickle
+#from DEC import ClusteringLayer
 
 
 class ClusteringLayer(Layer):
@@ -139,20 +139,21 @@ class DeepEmbeddingClustering(object):
 
     def initialize(self, X, save_autoencoder=False, **kwargs):
         if self.pretrained_weights is None:
-            print 'Training autoencoder.'
+            print ('Training autoencoder.')
             self.autoencoder.fit(X, X, batch_size=self.batch_size, **kwargs)
             if save_autoencoder:
                 self.autoencoder.save_weights('autoencoder.h5')
+                print('saving autoencoder weights...')
         else:
-            print 'Loading pretrained weights for autoencoder.'
+            print ('Loading pretrained weights for autoencoder.')
             self.autoencoder.load_weights(self.pretrained_weights)
 
-        # update encoder, decoder
-        for i in range(len(self.encoder.layers)):
-            self.encoder.layers[i].set_weights(self.autoencoder.layers[i].get_weights())
+        # update encoder weights - ???
+#        for i in range(len(self.encoder.layers)):
+#            self.encoder.layers[i].set_weights(self.autoencoder.layers[i].get_weights())
 
         # initialize cluster centres using k-means
-        print 'Initializing cluster centres with k-means.'
+        print ('Initializing cluster centres with k-means.')
         if self.cluster_centres is None:
             kmeans = KMeans(n_clusters=self.n_clusters, n_init=50)
             self.y_pred = kmeans.fit_predict(self.encoder.predict(X))
@@ -163,7 +164,7 @@ class DeepEmbeddingClustering(object):
                          output=ClusteringLayer(self.n_clusters,
                                                 weights=self.cluster_centres,
                                                 name='clustering')(self.encoded))
-        self.DEC.compile(loss='kullback_leibler_divergence', optimizer='adadelta')
+        self.DEC.compile(loss='kullback_leibler_divergence', optimizer='adam')
         return
 
     def cluster_acc(self, y_true, y_pred):
@@ -183,18 +184,18 @@ class DeepEmbeddingClustering(object):
 
         if update_interval is None:
             # 1 epochs
-            update_interval = X.shape[0]/self.batch_size
-        print 'Update interval', update_interval
+            update_interval = X.shape[0]//self.batch_size
+        print ('Update interval', update_interval)
 
         if save_interval is None:
             # 50 epochs
-            save_interval = X.shape[0]/self.batch_size*50
-        print 'Save interval', save_interval
+            save_interval = X.shape[0]//self.batch_size*50
+        print ('Save interval', save_interval)
 
         assert save_interval >= update_interval
 
         train = True
-        shuffled = np.random.shuffle(range(X.shape[0]))
+#        shuffled = np.random.shuffle(range(X.shape[0]))
         iteration, index = 0, 0
         self.accuracy = []
 
@@ -202,7 +203,7 @@ class DeepEmbeddingClustering(object):
             sys.stdout.write('\r')
             # cutoff iteration
             if iter_max < iteration:
-                print 'Reached maximum iteration limit. Stopping training.'
+                print ('Reached maximum iteration limit. Stopping training.')
                 return
 
             # update (or initialize) probability distributions and propagate weight changes
@@ -216,17 +217,18 @@ class DeepEmbeddingClustering(object):
                 if y is not None:
                     acc = self.cluster_acc(y, y_pred)[0]
                     self.accuracy.append(acc)
-                    print 'Iteration '+str(iteration)+', Accuracy '+str(np.round(acc, 5))
+                    print ('Iteration '+str(iteration)+', Accuracy '+str(np.round(acc, 5)))
                 else:
-                    print str(np.round(delta_label*100, 5))+'% change in label assignment'
+                    print (str(np.round(delta_label*100, 5))+'% change in label assignment')
 
                 if delta_label < tol:
-                    print 'Reached tolerance threshold. Stopping training.'
+                    print ('Reached tolerance threshold. Stopping training.')
                     train = False
                     continue
                 else:
                     self.y_pred = y_pred
 
+                # update Encoder weights by DEC weights
                 for i in range(len(self.encoder.layers)):
                     self.encoder.layers[i].set_weights(self.DEC.layers[i].get_weights())
                 self.cluster_centres = self.DEC.layers[-1].get_weights()[0]
@@ -236,13 +238,14 @@ class DeepEmbeddingClustering(object):
             if (index+1)*self.batch_size > X.shape[0]:
                 loss = self.DEC.train_on_batch(X[index*self.batch_size::], self.p[index*self.batch_size::])
                 index = 0
-                sys.stdout.write('Loss %f' % loss)
+#                sys.stdout.write('Loss %f\r' % loss)
             else:
                 loss = self.DEC.train_on_batch(X[index*self.batch_size:(index+1) * self.batch_size],
                                                self.p[index*self.batch_size:(index+1) * self.batch_size])
-                sys.stdout.write('Loss %f' % loss)
+#                sys.stdout.write('Loss %f\r' % loss)
                 index += 1
-
+            sys.stdout.write('Loss %f\r' % loss)
+            
             # save intermediate
             if iteration % save_interval == 0:
                 z = self.encoder.predict(X)
@@ -251,7 +254,7 @@ class DeepEmbeddingClustering(object):
                 clust_2d = pca.transform(self.cluster_centres)
                 # save states for visualization
                 pickle.dump({'z_2d': z_2d, 'clust_2d': clust_2d, 'q': self.q, 'p': self.p},
-                            open('c'+str(iteration)+'.pkl', 'w'))
+                            open('c'+str(iteration)+'.pkl', 'wb'))
                 # save DEC model checkpoints
                 self.DEC.save('DEC_model_'+str(iteration)+'.h5')
 
